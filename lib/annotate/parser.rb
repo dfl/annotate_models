@@ -309,6 +309,11 @@ module Annotate
                        "include database comments in model annotations, as its own column, after all others") do
         env['with_comment_column'] = 'true'
       end
+
+      option_parser.on('--classify-sti-columns',
+                       "group annotation columns by STI class ownership") do
+        env['classify_sti_columns'] = 'true'
+      end
     end
   end
 end
