@@ -310,9 +310,9 @@ module Annotate
         env['with_comment_column'] = 'true'
       end
 
-      option_parser.on('--classify-sti-columns',
+      option_parser.on('--group-sti-columns',
                        "group annotation columns by STI class ownership") do
-        env['classify_sti_columns'] = 'true'
+        env['group_sti_columns'] = 'true'
       end
     end
   end

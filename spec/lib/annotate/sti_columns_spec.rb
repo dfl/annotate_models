@@ -3,7 +3,12 @@ require 'active_record'
 require 'annotate/sti_columns'
 
 describe Annotate::StiColumns do
-  def mock_ar_class(name:, table_name:, superclass: ActiveRecord::Base, validators: [], belongs_to: [], enums: {}, stored_attrs: {}, column_names: [], inheritance_column: 'type', subclasses: [])
+  before(:each) do
+    # Reset the models_loaded flag between tests
+    described_class.instance_variable_set(:@models_loaded, true)
+  end
+
+  def mock_ar_class(name:, table_name:, superclass: ActiveRecord::Base, validators: [], belongs_to: [], enums: {}, stored_attrs: {}, column_names: [], inheritance_column: 'type', descendants: [], subclasses: nil)
     klass = double(name)
     allow(klass).to receive(:name).and_return(name)
     allow(klass).to receive(:table_name).and_return(table_name)
@@ -11,7 +16,8 @@ describe Annotate::StiColumns do
     allow(klass).to receive(:<).with(ActiveRecord::Base).and_return(true)
     allow(klass).to receive(:column_names).and_return(column_names)
     allow(klass).to receive(:inheritance_column).and_return(inheritance_column)
-    allow(klass).to receive(:subclasses).and_return(subclasses)
+    allow(klass).to receive(:descendants).and_return(descendants)
+    allow(klass).to receive(:subclasses).and_return(subclasses || descendants)
 
     allow(klass).to receive(:validators).and_return(
       validators.map { |attr| double('Validator', attributes: [attr]) }
@@ -88,13 +94,14 @@ describe Annotate::StiColumns do
     let(:num_doors_col) { mock_column(:num_doors) }
     let(:payload_col) { mock_column(:payload_capacity) }
     let(:color_col) { mock_column(:color) }
+    let(:battery_col) { mock_column(:battery_kwh) }
 
     let(:all_columns) { [id_col, type_col, name_col, num_doors_col, payload_col, color_col] }
 
     context 'for a non-STI class' do
       it 'returns a single group with no label' do
         klass = mock_ar_class(name: 'User', table_name: 'users',
-                              column_names: %w[id name], subclasses: [])
+                              column_names: %w[id name])
         cols = [id_col, name_col]
 
         result = described_class.partition(klass, cols)
@@ -133,6 +140,18 @@ describe Annotate::StiColumns do
         expect(result[0][0]).to eq 'Vehicle columns'
         expect(result[0][1]).to eq cols
       end
+
+      it 'warns when subclass owns no columns' do
+        vehicle = mock_ar_class(name: 'Vehicle', table_name: 'vehicles', validators: [:name])
+        car = mock_ar_class(name: 'Car', table_name: 'vehicles', superclass: vehicle,
+                            validators: [:name])
+        cols = [id_col, type_col, name_col]
+
+        expect($stderr).to receive(:puts).with(/could not determine which columns belong to Car/)
+        expect($stderr).to receive(:puts).with(/Add validations/)
+
+        described_class.partition(car, cols)
+      end
     end
 
     context 'for an STI base class' do
@@ -143,7 +162,7 @@ describe Annotate::StiColumns do
                             validators: [:name, :num_doors])
         truck = mock_ar_class(name: 'Truck', table_name: 'vehicles', superclass: vehicle,
                               validators: [:name, :payload_capacity])
-        allow(vehicle).to receive(:subclasses).and_return([car, truck])
+        allow(vehicle).to receive(:descendants).and_return([car, truck])
 
         result = described_class.partition(vehicle, all_columns)
 
@@ -160,7 +179,7 @@ describe Annotate::StiColumns do
                                 column_names: %w[id type name color])
         car = mock_ar_class(name: 'Car', table_name: 'vehicles', superclass: vehicle,
                             validators: [:num_doors])
-        allow(vehicle).to receive(:subclasses).and_return([car])
+        allow(vehicle).to receive(:descendants).and_return([car])
 
         cols = [id_col, type_col, name_col, color_col, num_doors_col]
         result = described_class.partition(vehicle, cols)
@@ -176,7 +195,7 @@ describe Annotate::StiColumns do
                             validators: [:color])
         truck = mock_ar_class(name: 'Truck', table_name: 'vehicles', superclass: vehicle,
                               validators: [:color])
-        allow(vehicle).to receive(:subclasses).and_return([car, truck])
+        allow(vehicle).to receive(:descendants).and_return([car, truck])
 
         cols = [id_col, type_col, color_col]
         result = described_class.partition(vehicle, cols)
@@ -186,6 +205,40 @@ describe Annotate::StiColumns do
         truck_group = result.find { |label, _| label == 'Truck columns' }
         expect(car_group[1].map { |c| c.name }).to include('color')
         expect(truck_group).to be_nil
+      end
+
+      it 'warns when no columns can be assigned to subclasses' do
+        vehicle = mock_ar_class(name: 'Vehicle', table_name: 'vehicles', validators: [:name],
+                                column_names: %w[id type name])
+        car = mock_ar_class(name: 'Car', table_name: 'vehicles', superclass: vehicle,
+                            validators: [:name])
+        allow(vehicle).to receive(:descendants).and_return([car])
+
+        expect($stderr).to receive(:puts).with(/found STI subclasses for Vehicle but no columns could be assigned/)
+        expect($stderr).to receive(:puts).with(/Add validations/)
+
+        described_class.partition(vehicle, [id_col, type_col, name_col])
+      end
+
+      it 'includes multi-level descendants via descendants' do
+        vehicle = mock_ar_class(name: 'Vehicle', table_name: 'vehicles', validators: [:name],
+                                column_names: %w[id type name num_doors battery_kwh])
+        car = mock_ar_class(name: 'Car', table_name: 'vehicles', superclass: vehicle,
+                            validators: [:name, :num_doors])
+        electric_car = mock_ar_class(name: 'ElectricCar', table_name: 'vehicles', superclass: car,
+                                     validators: [:name, :num_doors, :battery_kwh])
+        # descendants returns all levels, subclasses returns only direct
+        allow(vehicle).to receive(:descendants).and_return([car, electric_car])
+        allow(car).to receive(:descendants).and_return([electric_car])
+
+        cols = [id_col, type_col, name_col, num_doors_col, battery_col]
+        result = described_class.partition(vehicle, cols)
+
+        labels = result.map(&:first)
+        expect(labels).to include('Vehicle columns', 'Car columns', 'ElectricCar columns')
+
+        electric_group = result.find { |label, _| label == 'ElectricCar columns' }
+        expect(electric_group[1].map { |c| c.name }).to eq ['battery_kwh']
       end
     end
   end

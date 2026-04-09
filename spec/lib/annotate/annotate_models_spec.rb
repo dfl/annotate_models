@@ -1942,7 +1942,7 @@ describe AnnotateModels do
     end
   end
 
-  describe '.get_schema_info with classify_sti_columns' do
+  describe '.get_schema_info with group_sti_columns' do
     let(:all_columns) do
       [
         mock_column(:id, :integer),
@@ -2000,7 +2000,7 @@ describe AnnotateModels do
                                  owned_validator_attrs: [:num_doors])
         allow(vehicle).to receive(:subclasses).and_return([car])
 
-        result = AnnotateModels.get_schema_info(car, 'Schema Info', classify_sti_columns: true)
+        result = AnnotateModels.get_schema_info(car, 'Schema Info', group_sti_columns: true)
 
         expect(result).to include('# -- Vehicle columns --')
         expect(result).to include('# -- Car columns --')
@@ -2022,7 +2022,7 @@ describe AnnotateModels do
                                    owned_validator_attrs: [:payload_capacity])
         allow(vehicle).to receive(:subclasses).and_return([car, truck])
 
-        result = AnnotateModels.get_schema_info(vehicle, 'Schema Info', classify_sti_columns: true)
+        result = AnnotateModels.get_schema_info(vehicle, 'Schema Info', group_sti_columns: true)
 
         expect(result).to include('# -- Vehicle columns --')
         expect(result).to include('# -- Car columns --')
@@ -2045,19 +2045,19 @@ describe AnnotateModels do
         allow(vehicle).to receive(:subclasses).and_return([car])
 
         result = AnnotateModels.get_schema_info(car, 'Schema Info',
-                                                classify_sti_columns: true, format_markdown: true)
+                                                group_sti_columns: true, format_markdown: true)
 
         expect(result).to include('# ### Vehicle columns')
         expect(result).to include('# ### Car columns')
       end
     end
 
-    context 'when classify_sti_columns is false' do
+    context 'when group_sti_columns is false' do
       it 'does not add section headers' do
         result = AnnotateModels.get_schema_info(
           mock_class(:users, :id, [mock_column(:id, :integer), mock_column(:name, :string, limit: 50)]),
           'Schema Info',
-          classify_sti_columns: false
+          group_sti_columns: false
         )
 
         expect(result).not_to include('-- ')
@@ -2072,7 +2072,7 @@ describe AnnotateModels do
         allow(klass).to receive(:inheritance_column).and_return('type')
         allow(klass).to receive(:subclasses).and_return([])
 
-        result = AnnotateModels.get_schema_info(klass, 'Schema Info', classify_sti_columns: true)
+        result = AnnotateModels.get_schema_info(klass, 'Schema Info', group_sti_columns: true)
 
         expect(result).not_to include('-- ')
       end
@@ -2717,6 +2717,46 @@ describe AnnotateModels do
       end
 
       it 'removes annotation' do
+        expect(file_content_after_removal).to eq expected_result
+      end
+    end
+
+    context 'when annotation contains STI group headers' do
+      let :filename do
+        'sti_grouped.rb'
+      end
+
+      let :file_content do
+        <<~EOS
+          # == Schema Information
+          #
+          # Table name: vehicles
+          #
+          #
+          # -- Vehicle columns --
+          #
+          #  id         :bigint           not null, primary key
+          #  type       :string
+          #  name       :string           not null
+          #
+          # -- Car columns --
+          #
+          #  num_doors  :integer
+          #
+
+          class Car < Vehicle
+          end
+        EOS
+      end
+
+      let :expected_result do
+        <<~EOS
+          class Car < Vehicle
+          end
+        EOS
+      end
+
+      it 'removes annotation including group headers' do
         expect(file_content_after_removal).to eq expected_result
       end
     end

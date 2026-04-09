@@ -10,7 +10,7 @@ module Annotate
 
       def base_class?(klass)
         klass.column_names.include?(klass.inheritance_column) &&
-          klass.subclasses.any? { |d| d.table_name == klass.table_name }
+          sti_descendants(klass).any?
       end
 
       def columns_referenced_in(klass)
@@ -50,11 +50,39 @@ module Annotate
 
       private
 
+      # Returns all descendants of klass that share the same table (STI).
+      # Uses descendants (all levels) rather than subclasses (direct only)
+      # to support multi-level STI hierarchies.
+      #
+      # Attempts eager loading first to ensure all subclasses are visible.
+      def sti_descendants(klass)
+        ensure_models_loaded
+        if klass.respond_to?(:descendants)
+          klass.descendants.select { |d| d.table_name == klass.table_name }
+        else
+          klass.subclasses.select { |d| d.table_name == klass.table_name }
+        end
+      end
+
+      def ensure_models_loaded
+        return if @models_loaded
+
+        if defined?(Rails) && Rails.respond_to?(:application) && Rails.application
+          Rails.application.eager_load! unless Rails.application.config.eager_load
+        end
+        @models_loaded = true
+      end
+
       def partition_for_subclass(klass, cols)
         owned = columns_owned_by(klass)
         base_name = klass.superclass.name.demodulize
         shared = cols.reject { |c| owned.include?(c.name.to_s) }
         specific = cols.select { |c| owned.include?(c.name.to_s) }
+
+        if specific.empty?
+          $stderr.puts "Warning: --group-sti-columns could not determine which columns belong to #{klass.name}."
+          $stderr.puts "  Add validations, associations, or enums to #{klass.name} to improve grouping."
+        end
 
         groups = []
         groups << ["#{base_name} columns", shared] if shared.any?
@@ -63,10 +91,10 @@ module Annotate
       end
 
       def partition_for_base_class(klass, cols)
-        sti_subclasses = klass.subclasses.select { |d| d.table_name == klass.table_name }.sort_by(&:name)
+        all_descendants = sti_descendants(klass).sort_by(&:name)
         ownership = {}
 
-        sti_subclasses.each do |sub|
+        all_descendants.each do |sub|
           columns_owned_by(sub).each do |col_name|
             ownership[col_name] ||= sub.name.demodulize
           end
@@ -75,11 +103,17 @@ module Annotate
         base_cols = cols.reject { |c| ownership.key?(c.name.to_s) }
         groups = [["#{klass.name.demodulize} columns", base_cols]]
 
-        sti_subclasses.each do |sub|
+        all_descendants.each do |sub|
           sub_name = sub.name.demodulize
           sub_cols = cols.select { |c| ownership[c.name.to_s] == sub_name }
           groups << ["#{sub_name} columns", sub_cols] if sub_cols.any?
         end
+
+        if ownership.empty?
+          $stderr.puts "Warning: --group-sti-columns found STI subclasses for #{klass.name} but no columns could be assigned."
+          $stderr.puts "  Add validations, associations, or enums to subclasses to improve grouping."
+        end
+
         groups
       end
     end

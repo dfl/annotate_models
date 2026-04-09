@@ -172,7 +172,7 @@ module AnnotateModels
       # Output annotation
       bare_max_attrs_length = cols_meta.map { |_, m| m[:simple_formatted_attrs].length }.max
 
-      if options[:classify_sti_columns]
+      if options[:group_sti_columns]
         grouped_cols = Annotate::StiColumns.partition(klass, cols)
       else
         grouped_cols = [[nil, cols]]
