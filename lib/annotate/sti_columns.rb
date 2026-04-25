@@ -27,7 +27,7 @@ module Annotate
         end
         cols.merge(klass.defined_enums.keys) if klass.respond_to?(:defined_enums)
         if klass.respond_to?(:stored_attributes) && klass.stored_attributes.any?
-          cols.merge(klass.stored_attributes.values.flatten.map(&:to_s))
+          cols.merge(klass.stored_attributes.keys.map(&:to_s))
         end
         cols
       end

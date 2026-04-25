@@ -53,14 +53,14 @@ describe Annotate::StiColumns do
 
     it 'collects stored attribute columns' do
       klass = mock_ar_class(name: 'Car', table_name: 'vehicles', stored_attrs: { settings: [:color, :theme] })
-      expect(described_class.columns_referenced_in(klass)).to eq Set.new(%w[color theme])
+      expect(described_class.columns_referenced_in(klass)).to eq Set.new(%w[settings])
     end
 
     it 'combines all sources' do
       klass = mock_ar_class(name: 'Car', table_name: 'vehicles',
                             validators: [:name], belongs_to: [:owner_id],
                             enums: { 'status' => {} }, stored_attrs: { prefs: [:lang] })
-      expect(described_class.columns_referenced_in(klass)).to eq Set.new(%w[name owner_id status lang])
+      expect(described_class.columns_referenced_in(klass)).to eq Set.new(%w[name owner_id status prefs])
     end
   end
 
@@ -95,6 +95,7 @@ describe Annotate::StiColumns do
     let(:payload_col) { mock_column(:payload_capacity) }
     let(:color_col) { mock_column(:color) }
     let(:battery_col) { mock_column(:battery_kwh) }
+    let(:settings_col) { mock_column(:settings) }
 
     let(:all_columns) { [id_col, type_col, name_col, num_doors_col, payload_col, color_col] }
 
@@ -218,6 +219,21 @@ describe Annotate::StiColumns do
         expect($stderr).to receive(:puts).with(/Add validations/)
 
         described_class.partition(vehicle, [id_col, type_col, name_col])
+      end
+
+      it 'assigns stored attributes backing columns to the subclass correctly' do
+        vehicle = mock_ar_class(name: 'Vehicle', table_name: 'vehicles', validators: [:name],
+                                column_names: %w[id type name settings])
+        car = mock_ar_class(name: 'Car', table_name: 'vehicles', superclass: vehicle,
+                            validators: [:name], stored_attrs: { settings: [:color, :theme] })
+        allow(vehicle).to receive(:descendants).and_return([car])
+
+        cols = [id_col, type_col, name_col, settings_col]
+        result = described_class.partition(vehicle, cols)
+
+        car_group = result.find { |label, _| label == 'Car columns' }
+        expect(car_group).not_to be_nil
+        expect(car_group[1].map { |c| c.name }).to eq ['settings']
       end
 
       it 'includes multi-level descendants via descendants' do
